@@ -79,8 +79,7 @@ export class Negotiator {
 
       if (Object.values(approvals).every(Boolean)) {
         this.store.updateSessionState(sessionId, "APPROVED");
-        const proposals = roundMessages.filter((m) => m.type === "proposal");
-        const finalPlan = proposals.length > 0 ? proposals[proposals.length - 1].content : null;
+        const finalPlan = this.extractFinalPlan(roundMessages, agentNames);
         this.onEvent({ type: "complete", status: "APPROVED", finalPlan });
         return { sessionId, status: "APPROVED", finalPlan, roundsCompleted };
       }
@@ -90,8 +89,7 @@ export class Negotiator {
 
     this.store.updateSessionState(sessionId, "AWAITING_APPROVAL");
     const allMessages = this.store.getMessages(sessionId);
-    const proposals = allMessages.filter((m) => m.type === "proposal");
-    const finalPlan = proposals.length > 0 ? proposals[proposals.length - 1].content : null;
+    const finalPlan = this.extractFinalPlan(allMessages, agentNames);
     this.onEvent({ type: "complete", status: "EXHAUSTED", finalPlan });
 
     return { sessionId, status: "EXHAUSTED", finalPlan, roundsCompleted };
@@ -147,5 +145,28 @@ export class Negotiator {
       approvals[name] = roundMessages.some((m) => m.agent === name && m.type === "approval");
     }
     return approvals;
+  }
+
+  private extractFinalPlan(messages: Message[], agentNames: string[]): string | null {
+    const agentMessages = messages.filter(
+      (m) => m.agent !== "system" && (m.type === "proposal" || m.type === "approval" || m.type === "rejection" || m.type === "critique" || m.type === "concession")
+    );
+    if (agentMessages.length === 0) return null;
+
+    const latestByAgent = new Map<string, Message>();
+    for (const msg of agentMessages) {
+      const existing = latestByAgent.get(msg.agent);
+      if (!existing || msg.round > existing.round || msg.createdAt > existing.createdAt) {
+        latestByAgent.set(msg.agent, msg);
+      }
+    }
+
+    const latest = Array.from(latestByAgent.values());
+    if (latest.length === 0) return null;
+    if (latest.length === 1) return latest[0].content;
+
+    return latest
+      .map((m) => `## ${m.agent}\n\n${m.content}`)
+      .join("\n\n---\n\n");
   }
 }
