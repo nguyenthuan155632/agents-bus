@@ -14,6 +14,16 @@ import { mkdirSync, writeFileSync } from "node:fs";
 const PLANS_DIR = join(DATA_DIR, "plans");
 mkdirSync(PLANS_DIR, { recursive: true });
 
+function printPlan(planPath: string, topic: string, content: string): void {
+  const width = (process.stdout.columns ?? 80) - 4;
+  const bar = "═".repeat(Math.min(width + 4, 80));
+  console.log(`\n${bar}`);
+  console.log(`  PLAN SAVED: ${planPath}`);
+  console.log(`${bar}\n`);
+  console.log(renderMarkdown(`# ${topic}\n\n${content}`, { width }));
+  console.log(`\n${bar}\n`);
+}
+
 const program = new Command();
 
 program
@@ -113,12 +123,13 @@ program
         const planPath = join(PLANS_DIR, `${result.sessionId}.md`);
         writeFileSync(planPath, `# ${topic}\n\n${finalPlan}`, "utf-8");
 
-        if (!uiHandle) {
-          console.log(`\nPlan saved to: ${planPath}`);
+        if (uiHandle) {
+          uiHandle.unmount();
+          uiHandle = null;
         }
-      }
 
-      if (uiHandle) {
+        printPlan(planPath, topic, finalPlan);
+      } else if (uiHandle) {
         uiHandle.pushEvent({
           type: "complete",
           status: result.status,
@@ -201,7 +212,7 @@ program
         if (merged) {
           const planPath = join(PLANS_DIR, `${sessionId}.md`);
           writeFileSync(planPath, `# ${session.topic}\n\n${merged}`, "utf-8");
-          console.log(`Plan saved to: ${planPath}`);
+          printPlan(planPath, session.topic, merged);
         }
         return;
       }
@@ -219,8 +230,12 @@ program
         if (merged) {
           const planPath = join(PLANS_DIR, `${sessionId}.md`);
           writeFileSync(planPath, `# ${session.topic}\n\n${merged}`, "utf-8");
-          console.log(`Plan saved to: ${planPath}`);
+          printPlan(planPath, session.topic, merged);
         }
+      } else if (result.finalPlan) {
+        const planPath = join(PLANS_DIR, `${sessionId}.md`);
+        writeFileSync(planPath, `# ${session.topic}\n\n${result.finalPlan}`, "utf-8");
+        printPlan(planPath, session.topic, result.finalPlan);
       }
     });
   });
