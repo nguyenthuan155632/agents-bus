@@ -18,18 +18,33 @@ export function startUI(
   providers: ProviderConfig[],
   onComplete: () => void
 ): UIHandle {
-  let events: NegotiationEvent[] = [];
+  const events: NegotiationEvent[] = [];
   let waitingFor: string | null = null;
-  let forceUpdate: () => void = () => {};
+  let pendingUpdate = false;
+
+  function scheduleUpdate() {
+    if (pendingUpdate) return;
+    pendingUpdate = true;
+    process.nextTick(() => {
+      pendingUpdate = false;
+      rerender();
+    });
+  }
+
+  function rerender() {
+    renderRoot();
+  }
+
+  let renderRoot: () => void = () => {};
 
   function Wrapper() {
-    const [, setState] = React.useState(0);
-    forceUpdate = () => setState((n) => n + 1);
+    const [, setTick] = React.useState(0);
+    renderRoot = () => setTick((n) => n + 1);
     return React.createElement(NegotiationApp, {
       topic,
       maxRounds,
       providers,
-      events: [...events],
+      events,
       waitingFor,
       onComplete,
     });
@@ -40,11 +55,11 @@ export function startUI(
   return {
     pushEvent(event: NegotiationEvent) {
       events.push(event);
-      forceUpdate();
+      scheduleUpdate();
     },
     setWaitingFor(agent: string | null) {
       waitingFor = agent;
-      forceUpdate();
+      scheduleUpdate();
     },
     unmount,
   };

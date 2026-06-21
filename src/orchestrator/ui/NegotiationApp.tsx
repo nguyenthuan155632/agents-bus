@@ -1,6 +1,6 @@
 // src/orchestrator/ui/NegotiationApp.tsx
 
-import React, { useState, useEffect } from "react";
+import React, { useMemo } from "react";
 import { Box, Text, useInput } from "ink";
 import { Spinner } from "@inkjs/ui";
 import type { NegotiationEvent } from "../negotiate.js";
@@ -12,8 +12,19 @@ interface FormattedMessage {
   color: string;
 }
 
+const providerMapCache = new WeakMap<ProviderConfig[], Map<string, ProviderConfig>>();
+
+function getProviderMap(providers: ProviderConfig[]): Map<string, ProviderConfig> {
+  let map = providerMapCache.get(providers);
+  if (!map) {
+    map = new Map(providers.map((p) => [p.name, p]));
+    providerMapCache.set(providers, map);
+  }
+  return map;
+}
+
 export function formatMessage(event: NegotiationEvent, providers: ProviderConfig[]): FormattedMessage {
-  const providerMap = new Map(providers.map((p) => [p.name, p]));
+  const providerMap = getProviderMap(providers);
   const getProvider = (name: string) => providerMap.get(name);
 
   if (event.type === "agent-response") {
@@ -88,33 +99,40 @@ interface NegotiationAppProps {
   onComplete: () => void;
 }
 
+const DISPLAY_EVENT_TYPES = new Set(["agent-response", "agent-error", "round-start", "complete"]);
+
 export function NegotiationApp({ topic, maxRounds, providers, events, waitingFor, onComplete }: NegotiationAppProps) {
-  const [currentRound, setCurrentRound] = useState(0);
-  const [approvals, setApprovals] = useState<Record<string, boolean>>({});
-  const [done, setDone] = useState(false);
-
-  useEffect(() => {
-    for (const event of events) {
-      if (event.type === "round-start") {
-        setCurrentRound(event.round);
-      }
-      if (event.type === "round-end") {
-        setApprovals(event.approvals);
-      }
-      if (event.type === "complete") {
-        setDone(true);
-      }
-    }
-  }, [events]);
-
   useInput((input, key) => {
     if (input === "q" || key.escape) {
       onComplete();
     }
   });
 
-  const displayEvents = events.filter(
-    (e) => e.type === "agent-response" || e.type === "agent-error" || e.type === "round-start" || e.type === "complete"
+  const { currentRound, approvals, done, displayEvents } = useMemo(() => {
+    let round = 0;
+    let aps: Record<string, boolean> = {};
+    let isDone = false;
+    const display: NegotiationEvent[] = [];
+
+    for (const event of events) {
+      if (event.type === "round-start") {
+        round = event.round;
+      } else if (event.type === "round-end") {
+        aps = event.approvals;
+      } else if (event.type === "complete") {
+        isDone = true;
+      }
+      if (DISPLAY_EVENT_TYPES.has(event.type)) {
+        display.push(event);
+      }
+    }
+
+    return { currentRound: round, approvals: aps, done: isDone, displayEvents: display };
+  }, [events]);
+
+  const formattedMessages = useMemo(
+    () => displayEvents.map((event) => formatMessage(event, providers)),
+    [displayEvents, providers]
   );
 
   return (
@@ -126,17 +144,14 @@ export function NegotiationApp({ topic, maxRounds, providers, events, waitingFor
       </Box>
 
       <Box flexDirection="column" marginTop={1}>
-        {displayEvents.map((event, i) => {
-          const msg = formatMessage(event, providers);
-          return (
-            <Box key={i} flexDirection="column" marginBottom={1}>
-              <Text bold color={msg.color}>
-                [{msg.label}]
-              </Text>
-              <Text wrap="wrap">{msg.content}</Text>
-            </Box>
-          );
-        })}
+        {formattedMessages.map((msg, i) => (
+          <Box key={i} flexDirection="column" marginBottom={1}>
+            <Text bold color={msg.color}>
+              [{msg.label}]
+            </Text>
+            <Text wrap="wrap">{msg.content}</Text>
+          </Box>
+        ))}
       </Box>
 
       {waitingFor && !done && (
