@@ -1,9 +1,11 @@
+#!/usr/bin/env node
+
 // src/mcp-server/index.ts
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { Store } from "./store.js";
+import { Store } from "../persistence/store.js";
 import { createToolHandlers } from "./tools.js";
 import { homedir } from "node:os";
 import { join } from "node:path";

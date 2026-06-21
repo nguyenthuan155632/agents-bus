@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { Store } from "../../src/mcp-server/store.js";
+import { Store } from "../../src/persistence/store.js";
 
 describe("Store", () => {
   let store: Store;

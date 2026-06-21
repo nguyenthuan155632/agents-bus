@@ -1,6 +1,6 @@
 // src/mcp-server/tools.ts
 
-import type { Store } from "./store.js";
+import type { Store } from "../persistence/store.js";
 import type { MessageType } from "../shared/types.js";
 
 export function createToolHandlers(store: Store) {

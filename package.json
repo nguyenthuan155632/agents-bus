@@ -6,11 +6,13 @@
     "node": ">=22.18.0"
   },
   "bin": {
-    "agents-bus": "./dist/orchestrator/index.js"
+    "agents-bus": "./dist/orchestrator/index.js",
+    "agents-bus-mcp": "./dist/mcp-server/index.js"
   },
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/orchestrator/index.ts",
+    "dev:mcp": "tsx src/mcp-server/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit"

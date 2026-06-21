@@ -1,17 +1,15 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
-import { Store } from "../mcp-server/store.js";
+import { Store, withStore, withStoreAsync, DATA_DIR } from "../persistence/store.js";
 import { createAgent } from "./agents/factory.js";
 import { getProviders, listProviders } from "./agents/providers.js";
 import { Negotiator, type NegotiationEvent } from "./negotiate.js";
 import { mergePlans } from "./merger.js";
 import { startUI } from "./ui/index.js";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { mkdirSync, writeFileSync } from "node:fs";
 
-const DATA_DIR = join(homedir(), ".agents-bus");
 const PLANS_DIR = join(DATA_DIR, "plans");
 mkdirSync(PLANS_DIR, { recursive: true });
 
@@ -35,105 +33,102 @@ program
 
     if (providers.length === 0) {
       console.error("No valid agents specified. Available: " + listProviders().map((p) => p.name).join(", "));
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
 
     const agents = providers.map((p) => createAgent(p));
     const maxRounds = parseInt(options.rounds, 10);
-    const store = new Store(join(DATA_DIR, "sessions.db"));
 
-    let uiHandle: ReturnType<typeof startUI> | null = null;
+    await withStoreAsync(async (store) => {
+      let uiHandle: ReturnType<typeof startUI> | null = null;
 
-    if (options.ui) {
-      uiHandle = startUI(topic, maxRounds, providers, () => {
-        uiHandle?.unmount();
-        store.close();
-        process.exit(0);
-      });
-    }
+      if (options.ui) {
+        uiHandle = startUI(topic, maxRounds, providers, () => {
+          uiHandle?.unmount();
+          process.exitCode = 0;
+        });
+      }
 
-    const onEvent = (event: NegotiationEvent) => {
+      const onEvent = (event: NegotiationEvent) => {
+        if (uiHandle) {
+          uiHandle.pushEvent(event);
+          if (event.type === "round-start") {
+            uiHandle.setWaitingFor(providers[0]?.displayName ?? null);
+          }
+          if (event.type === "agent-response") {
+            const idx = providers.findIndex((p) => p.name === event.agent);
+            const next = providers[idx + 1];
+            uiHandle.setWaitingFor(next ? next.displayName : null);
+          }
+          if (event.type === "agent-error") {
+            const idx = providers.findIndex((p) => p.name === event.agent);
+            const next = providers[idx + 1];
+            uiHandle.setWaitingFor(next ? next.displayName : null);
+          }
+          if (event.type === "complete") {
+            uiHandle.setWaitingFor(null);
+          }
+        } else {
+          if (event.type === "round-start") {
+            console.log(`\n--- Round ${event.round}/${event.maxRounds} ---`);
+          }
+          if (event.type === "agent-response") {
+            console.log(`\n[${event.agent}] (${event.messageType}):`);
+            console.log(event.content);
+          }
+          if (event.type === "agent-error") {
+            console.error(`\n[${event.agent}] ERROR: ${event.error}`);
+          }
+          if (event.type === "complete") {
+            console.log(`\n=== ${event.status} ===`);
+          }
+        }
+      };
+
+      const negotiator = new Negotiator(store, agents, providers, onEvent);
+      const result = await negotiator.run(topic, maxRounds);
+
+      let finalPlan = result.finalPlan;
+
+      if (result.status === "EXHAUSTED") {
+        const messages = store.getMessages(result.sessionId);
+        finalPlan = await mergePlans(messages, providers);
+      }
+
+      if (finalPlan) {
+        const planPath = join(PLANS_DIR, `${result.sessionId}.md`);
+        writeFileSync(planPath, `# ${topic}\n\n${finalPlan}`, "utf-8");
+
+        if (!uiHandle) {
+          console.log(`\nPlan saved to: ${planPath}`);
+        }
+      }
+
       if (uiHandle) {
-        uiHandle.pushEvent(event);
-        if (event.type === "round-start") {
-          uiHandle.setWaitingFor(providers[0]?.displayName ?? null);
-        }
-        if (event.type === "agent-response") {
-          const idx = providers.findIndex((p) => p.name === event.agent);
-          const next = providers[idx + 1];
-          uiHandle.setWaitingFor(next ? next.displayName : null);
-        }
-        if (event.type === "agent-error") {
-          const idx = providers.findIndex((p) => p.name === event.agent);
-          const next = providers[idx + 1];
-          uiHandle.setWaitingFor(next ? next.displayName : null);
-        }
-        if (event.type === "complete") {
-          uiHandle.setWaitingFor(null);
-        }
-      } else {
-        if (event.type === "round-start") {
-          console.log(`\n--- Round ${event.round}/${event.maxRounds} ---`);
-        }
-        if (event.type === "agent-response") {
-          console.log(`\n[${event.agent}] (${event.messageType}):`);
-          console.log(event.content);
-        }
-        if (event.type === "agent-error") {
-          console.error(`\n[${event.agent}] ERROR: ${event.error}`);
-        }
-        if (event.type === "complete") {
-          console.log(`\n=== ${event.status} ===`);
-        }
+        uiHandle.pushEvent({
+          type: "complete",
+          status: result.status,
+          finalPlan,
+        });
       }
-    };
-
-    const negotiator = new Negotiator(store, agents, providers, onEvent);
-    const result = await negotiator.run(topic, maxRounds);
-
-    let finalPlan = result.finalPlan;
-
-    if (result.status === "EXHAUSTED") {
-      const messages = store.getMessages(result.sessionId);
-      finalPlan = await mergePlans(messages, providers);
-    }
-
-    if (finalPlan) {
-      const planPath = join(PLANS_DIR, `${result.sessionId}.md`);
-      writeFileSync(planPath, `# ${topic}\n\n${finalPlan}`, "utf-8");
-
-      if (!uiHandle) {
-        console.log(`\nPlan saved to: ${planPath}`);
-      }
-    }
-
-    if (uiHandle) {
-      uiHandle.pushEvent({
-        type: "complete",
-        status: result.status,
-        finalPlan,
-      });
-    }
-
-    if (!uiHandle) {
-      store.close();
-    }
+    });
   });
 
 program
   .command("list")
   .description("List all negotiation sessions")
   .action(() => {
-    const store = new Store(join(DATA_DIR, "sessions.db"));
-    const sessions = store.listSessions();
-    if (sessions.length === 0) {
-      console.log("No sessions found.");
-    } else {
-      for (const s of sessions) {
-        console.log(`${s.id} | ${s.state} | Round ${s.currentRound}/${s.maxRounds} | ${s.topic}`);
+    withStore((store) => {
+      const sessions = store.listSessions();
+      if (sessions.length === 0) {
+        console.log("No sessions found.");
+      } else {
+        for (const s of sessions) {
+          console.log(`${s.id} | ${s.state} | Round ${s.currentRound}/${s.maxRounds} | ${s.topic}`);
+        }
       }
-    }
-    store.close();
+    });
   });
 
 program
@@ -141,29 +136,29 @@ program
   .description("View session transcript")
   .argument("<session-id>", "Session ID to view")
   .action((sessionId: string) => {
-    const store = new Store(join(DATA_DIR, "sessions.db"));
-    const session = store.getSession(sessionId);
-    if (!session) {
-      console.error(`Session ${sessionId} not found.`);
-      process.exit(1);
-    }
+    withStore((store) => {
+      const session = store.getSession(sessionId);
+      if (!session) {
+        console.error(`Session ${sessionId} not found.`);
+        process.exitCode = 1;
+        return;
+      }
 
-    console.log(`Session: ${session.id}`);
-    console.log(`Topic: ${session.topic}`);
-    console.log(`State: ${session.state}`);
-    console.log(`Round: ${session.currentRound}/${session.maxRounds}`);
-    console.log(`Agents: ${session.agents.join(", ")}`);
-    console.log(`Approvals: ${JSON.stringify(session.approvals)}`);
-    console.log("\n--- Transcript ---\n");
+      console.log(`Session: ${session.id}`);
+      console.log(`Topic: ${session.topic}`);
+      console.log(`State: ${session.state}`);
+      console.log(`Round: ${session.currentRound}/${session.maxRounds}`);
+      console.log(`Agents: ${session.agents.join(", ")}`);
+      console.log(`Approvals: ${JSON.stringify(session.approvals)}`);
+      console.log("\n--- Transcript ---\n");
 
-    const messages = store.getMessages(sessionId);
-    for (const m of messages) {
-      console.log(`[${m.agent}] (${m.type}, round ${m.round}):`);
-      console.log(m.content);
-      console.log();
-    }
-
-    store.close();
+      const messages = store.getMessages(sessionId);
+      for (const m of messages) {
+        console.log(`[${m.agent}] (${m.type}, round ${m.round}):`);
+        console.log(m.content);
+        console.log();
+      }
+    });
   });
 
 program
@@ -171,41 +166,50 @@ program
   .description("Resume an existing session")
   .argument("<session-id>", "Session ID to resume")
   .action(async (sessionId: string) => {
-    const store = new Store(join(DATA_DIR, "sessions.db"));
-    const session = store.getSession(sessionId);
-    if (!session) {
-      console.error(`Session ${sessionId} not found.`);
-      process.exit(1);
-    }
-
-    if (session.state === "APPROVED") {
-      console.log("Session already approved.");
-      store.close();
-      return;
-    }
-
-    const remaining = session.maxRounds - session.currentRound;
-    if (remaining <= 0) {
-      console.log("Max rounds reached. Merging proposals...");
-      const messages = store.getMessages(sessionId);
-      const providers = getProviders(session.agents);
-      const merged = await mergePlans(messages, providers);
-      if (merged) {
-        const planPath = join(PLANS_DIR, `${sessionId}.md`);
-        writeFileSync(planPath, `# ${session.topic}\n\n${merged}`, "utf-8");
-        console.log(`Plan saved to: ${planPath}`);
+    await withStoreAsync(async (store) => {
+      const session = store.getSession(sessionId);
+      if (!session) {
+        console.error(`Session ${sessionId} not found.`);
+        process.exitCode = 1;
+        return;
       }
-      store.close();
-      return;
-    }
 
-    console.log(`Resuming "${session.topic}" (${remaining} rounds remaining)`);
-    const providers = getProviders(session.agents);
-    const agents = providers.map((p) => createAgent(p));
-    const negotiator = new Negotiator(store, agents, providers);
-    const result = await negotiator.run(session.topic, remaining);
-    console.log(`Status: ${result.status} after ${result.roundsCompleted} more rounds`);
-    store.close();
+      if (session.state === "APPROVED") {
+        console.log("Session already approved.");
+        return;
+      }
+
+      const remaining = session.maxRounds - session.currentRound;
+      if (remaining <= 0) {
+        console.log("Max rounds reached. Merging proposals...");
+        const messages = store.getMessages(sessionId);
+        const providers = getProviders(session.agents);
+        const merged = await mergePlans(messages, providers);
+        if (merged) {
+          const planPath = join(PLANS_DIR, `${sessionId}.md`);
+          writeFileSync(planPath, `# ${session.topic}\n\n${merged}`, "utf-8");
+          console.log(`Plan saved to: ${planPath}`);
+        }
+        return;
+      }
+
+      console.log(`Resuming "${session.topic}" from round ${session.currentRound + 1} (${remaining} rounds remaining)`);
+      const providers = getProviders(session.agents);
+      const agents = providers.map((p) => createAgent(p));
+      const negotiator = new Negotiator(store, agents, providers);
+      const result = await negotiator.resume(sessionId);
+      console.log(`Status: ${result.status} (round ${result.roundsCompleted}/${session.maxRounds})`);
+
+      if (result.status === "EXHAUSTED") {
+        const messages = store.getMessages(sessionId);
+        const merged = await mergePlans(messages, providers);
+        if (merged) {
+          const planPath = join(PLANS_DIR, `${sessionId}.md`);
+          writeFileSync(planPath, `# ${session.topic}\n\n${merged}`, "utf-8");
+          console.log(`Plan saved to: ${planPath}`);
+        }
+      }
+    });
   });
 
 program

@@ -1,8 +1,34 @@
-// src/mcp-server/store.ts
+// src/persistence/store.ts
 
 import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
+import { homedir } from "node:os";
+import { mkdirSync } from "node:fs";
 import type { Session, Message, SessionState, MessageType } from "../shared/types.js";
+
+export const DATA_DIR = join(homedir(), ".agents-bus");
+export const DB_PATH = join(DATA_DIR, "sessions.db");
+
+export function withStore<T>(fn: (store: Store) => T): T {
+  mkdirSync(DATA_DIR, { recursive: true });
+  const store = new Store(DB_PATH);
+  try {
+    return fn(store);
+  } finally {
+    store.close();
+  }
+}
+
+export async function withStoreAsync<T>(fn: (store: Store) => Promise<T>): Promise<T> {
+  mkdirSync(DATA_DIR, { recursive: true });
+  const store = new Store(DB_PATH);
+  try {
+    return await fn(store);
+  } finally {
+    store.close();
+  }
+}
 
 export class Store {
   private db: Database.Database;

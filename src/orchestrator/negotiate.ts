@@ -1,6 +1,6 @@
 // src/orchestrator/negotiate.ts
 
-import type { Store } from "../mcp-server/store.js";
+import type { Store } from "../persistence/store.js";
 import type { Agent } from "./agents/types.js";
 import type { ProviderConfig, Message } from "../shared/types.js";
 import { buildAgentPrompt, buildSystemPrompt } from "./prompts.js";
@@ -34,50 +34,67 @@ export class Negotiator {
   async run(topic: string, maxRounds: number): Promise<NegotiationResult> {
     const agentNames = this.agents.map((a) => a.name);
     const session = this.store.createSession(topic, maxRounds, agentNames);
-    let roundsCompleted = 0;
+    return this.runRounds(session.id, session.topic, 1, maxRounds);
+  }
 
-    for (let round = 1; round <= maxRounds; round++) {
-      this.store.updateSessionState(session.id, "ROUND_IN_PROGRESS");
-      this.store.updateSessionRound(session.id, round);
+  async resume(sessionId: string): Promise<NegotiationResult> {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`Session ${sessionId} not found`);
+    const startRound = session.currentRound + 1;
+    return this.runRounds(session.id, session.topic, startRound, session.maxRounds);
+  }
+
+  private async runRounds(
+    sessionId: string,
+    topic: string,
+    startRound: number,
+    maxRounds: number
+  ): Promise<NegotiationResult> {
+    const agentNames = this.agents.map((a) => a.name);
+    let roundsCompleted = startRound - 1;
+
+    for (let round = startRound; round <= maxRounds; round++) {
+      this.store.updateSessionState(sessionId, "ROUND_IN_PROGRESS");
+      this.store.updateSessionRound(sessionId, round);
       roundsCompleted = round;
 
       this.onEvent({ type: "round-start", round, maxRounds });
-      this.store.postMessage(session.id, "system", "system", `Round ${round} begins`, round);
+      this.store.postMessage(sessionId, "system", "system", `Round ${round} begins`, round);
 
       for (let i = 0; i < this.agents.length; i++) {
         const agent = this.agents[i];
         const provider = this.providers[i];
-        const messages = this.store.getMessages(session.id);
-        await this.runAgentTurn(session.id, agent, provider, topic, round, maxRounds, messages);
+        const messages = this.store.getMessages(sessionId);
+        await this.runAgentTurn(sessionId, agent, provider, topic, round, maxRounds, messages);
       }
 
-      const roundMessages = this.store.getMessages(session.id);
+      const roundMessages = this.store.getMessages(sessionId);
       const approvals = this.parseApprovals(roundMessages, round, agentNames);
 
       for (const [name, approved] of Object.entries(approvals)) {
-        this.store.setApproval(session.id, name, approved);
+        this.store.setApproval(sessionId, name, approved);
       }
 
       this.onEvent({ type: "round-end", round, approvals });
 
       if (Object.values(approvals).every(Boolean)) {
-        this.store.updateSessionState(session.id, "APPROVED");
+        this.store.updateSessionState(sessionId, "APPROVED");
         const proposals = roundMessages.filter((m) => m.type === "proposal");
         const finalPlan = proposals.length > 0 ? proposals[proposals.length - 1].content : null;
         this.onEvent({ type: "complete", status: "APPROVED", finalPlan });
-        return { sessionId: session.id, status: "APPROVED", finalPlan, roundsCompleted };
+        return { sessionId, status: "APPROVED", finalPlan, roundsCompleted };
       }
 
-      this.store.resetApprovals(session.id);
+      this.store.resetApprovals(sessionId);
     }
 
-    this.store.updateSessionState(session.id, "AWAITING_APPROVAL");
-    const allMessages = this.store.getMessages(session.id);
+    this.store.updateSessionState(sessionId, "AWAITING_APPROVAL");
+    const allMessages = this.store.getMessages(sessionId);
     const proposals = allMessages.filter((m) => m.type === "proposal");
     const finalPlan = proposals.length > 0 ? proposals[proposals.length - 1].content : null;
     this.onEvent({ type: "complete", status: "EXHAUSTED", finalPlan });
 
-    return { sessionId: session.id, status: "EXHAUSTED", finalPlan, roundsCompleted };
+    return { sessionId, status: "EXHAUSTED", finalPlan, roundsCompleted };
   }
 
   private async runAgentTurn(
