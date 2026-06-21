@@ -12,7 +12,7 @@ export const DEFAULT_PROVIDERS: ProviderConfig[] = [
     responseParser: "json-array-result",
     role: "pragmatic architect",
     color: "blue",
-    timeoutMs: 120_000,
+    timeoutMs: 300_000,
   },
   {
     name: "codex",
@@ -23,7 +23,7 @@ export const DEFAULT_PROVIDERS: ProviderConfig[] = [
     responseParser: "jsonl-agent-message",
     role: "implementation-focused engineer",
     color: "green",
-    timeoutMs: 120_000,
+    timeoutMs: 300_000,
   },
   {
     name: "glm",
