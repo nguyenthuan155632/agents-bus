@@ -20,6 +20,7 @@ export function startUI(
 ): UIHandle {
   const events: NegotiationEvent[] = [];
   let waitingFor: string | null = null;
+  let version = 0;
   let pendingUpdate = false;
 
   function scheduleUpdate() {
@@ -27,6 +28,7 @@ export function startUI(
     pendingUpdate = true;
     process.nextTick(() => {
       pendingUpdate = false;
+      version++;
       rerender();
     });
   }
@@ -45,6 +47,7 @@ export function startUI(
       maxRounds,
       providers,
       events,
+      version,
       waitingFor,
       onComplete,
     });

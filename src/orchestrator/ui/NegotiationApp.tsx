@@ -2,7 +2,6 @@
 
 import React, { useMemo } from "react";
 import { Box, Text, useInput } from "ink";
-import { Spinner } from "@inkjs/ui";
 import type { NegotiationEvent } from "../negotiate.js";
 import type { ProviderConfig } from "../../shared/types.js";
 
@@ -95,13 +94,14 @@ interface NegotiationAppProps {
   maxRounds: number;
   providers: ProviderConfig[];
   events: NegotiationEvent[];
+  version: number;
   waitingFor: string | null;
   onComplete: () => void;
 }
 
 const DISPLAY_EVENT_TYPES = new Set(["agent-response", "agent-error", "round-start", "complete"]);
 
-export function NegotiationApp({ topic, maxRounds, providers, events, waitingFor, onComplete }: NegotiationAppProps) {
+export function NegotiationApp({ topic, maxRounds, providers, events, version, waitingFor, onComplete }: NegotiationAppProps) {
   useInput((input, key) => {
     if (input === "q" || key.escape) {
       onComplete();
@@ -128,7 +128,8 @@ export function NegotiationApp({ topic, maxRounds, providers, events, waitingFor
     }
 
     return { currentRound: round, approvals: aps, done: isDone, displayEvents: display };
-  }, [events]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [version]);
 
   const formattedMessages = useMemo(
     () => displayEvents.map((event) => formatMessage(event, providers)),
@@ -156,7 +157,7 @@ export function NegotiationApp({ topic, maxRounds, providers, events, waitingFor
 
       {waitingFor && !done && (
         <Box marginTop={1}>
-          <Spinner label={`Waiting for ${waitingFor}...`} />
+          <Text color="cyan">⠋ Waiting for {waitingFor}...</Text>
         </Box>
       )}
 
