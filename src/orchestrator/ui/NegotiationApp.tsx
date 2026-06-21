@@ -1,7 +1,7 @@
 // src/orchestrator/ui/NegotiationApp.tsx
 
 import React, { useMemo } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text, Static, useInput } from "ink";
 import { ActivityIndicator } from "./ActivityIndicator.js";
 import type { NegotiationEvent } from "../negotiate.js";
 import type { ProviderConfig } from "../../shared/types.js";
@@ -90,6 +90,8 @@ export function formatStatusBar(
   return `${topic} | Round ${round}/${maxRounds} | ${agentStatuses}${status}`;
 }
 
+const DISPLAY_EVENT_TYPES = new Set(["agent-response", "agent-error", "round-start", "complete"]);
+
 interface NegotiationAppProps {
   topic: string;
   maxRounds: number;
@@ -99,8 +101,6 @@ interface NegotiationAppProps {
   waitingFor: string | null;
   onComplete: () => void;
 }
-
-const DISPLAY_EVENT_TYPES = new Set(["agent-response", "agent-error", "round-start", "complete"]);
 
 export function NegotiationApp({ topic, maxRounds, providers, events, version, waitingFor, onComplete }: NegotiationAppProps) {
   useInput((input, key) => {
@@ -132,28 +132,28 @@ export function NegotiationApp({ topic, maxRounds, providers, events, version, w
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [version]);
 
-  const formattedMessages = useMemo(
+  const staticItems = useMemo(
     () => displayEvents.map((event) => formatMessage(event, providers)),
     [displayEvents, providers]
   );
 
   return (
-    <Box flexDirection="column" padding={1}>
-      <Box borderStyle="single" borderColor="cyan" paddingX={1}>
-        <Text bold color="cyan">
-          {formatStatusBar(topic, currentRound, maxRounds, providers, approvals)}
-        </Text>
-      </Box>
-
-      <Box flexDirection="column" marginTop={1}>
-        {formattedMessages.map((msg, i) => (
-          <Box key={i} flexDirection="column" marginBottom={1}>
+    <Box flexDirection="column">
+      <Static items={staticItems}>
+        {(msg, index) => (
+          <Box key={index} flexDirection="column" marginBottom={1}>
             <Text bold color={msg.color}>
               [{msg.label}]
             </Text>
             <Text wrap="wrap">{msg.content}</Text>
           </Box>
-        ))}
+        )}
+      </Static>
+
+      <Box borderStyle="single" borderColor="cyan" paddingX={1} marginTop={1}>
+        <Text bold color="cyan">
+          {formatStatusBar(topic, currentRound, maxRounds, providers, approvals)}
+        </Text>
       </Box>
 
       {waitingFor && !done && (
