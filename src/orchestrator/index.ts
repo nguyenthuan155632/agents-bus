@@ -7,6 +7,7 @@ import { getProviders, listProviders } from "./agents/providers.js";
 import { Negotiator, type NegotiationEvent } from "./negotiate.js";
 import { mergePlans } from "./merger.js";
 import { startUI } from "./ui/index.js";
+import { renderMarkdown } from "./ui/render-markdown.js";
 import { join } from "node:path";
 import { mkdirSync, writeFileSync } from "node:fs";
 
@@ -70,6 +71,7 @@ program
             uiHandle.setWaitingFor(null);
           }
         } else {
+          const plainWidth = (process.stdout.columns ?? 80) - 4;
           if (event.type === "agent-progress") {
             const prefix = event.chunk.type === "thinking" ? "thinking" : "writing";
             process.stdout.write(`\r[${event.agent}] ${prefix}: ${event.chunk.content.slice(0, 100).replace(/\n/g, " ")}`);
@@ -81,8 +83,10 @@ program
           }
           if (event.type === "agent-response") {
             process.stdout.write("\r\x1b[K");
-            console.log(`\n[${event.agent}] (${event.messageType}):`);
-            console.log(event.content);
+            const provider = providers.find((p) => p.name === event.agent);
+            const label = provider?.displayName ?? event.agent;
+            console.log(`\n[${label}] (${event.messageType}):`);
+            console.log(renderMarkdown(event.content, { width: plainWidth }));
           }
           if (event.type === "agent-error") {
             process.stdout.write("\r\x1b[K");

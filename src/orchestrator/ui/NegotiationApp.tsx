@@ -1,8 +1,9 @@
 // src/orchestrator/ui/NegotiationApp.tsx
 
 import React, { useMemo } from "react";
-import { Box, Text, Static, useInput } from "ink";
+import { Box, Text, Static, useInput, useStdout } from "ink";
 import { ActivityIndicator } from "./ActivityIndicator.js";
+import { renderMarkdown } from "./render-markdown.js";
 import type { NegotiationEvent } from "../negotiate.js";
 import type { ProviderConfig } from "../../shared/types.js";
 
@@ -110,6 +111,9 @@ function truncate(text: string, maxLen: number): string {
 }
 
 export function NegotiationApp({ topic, maxRounds, providers, events, version, waitingFor, progressText, progressType, onComplete }: NegotiationAppProps) {
+  const { stdout } = useStdout();
+  const width = (stdout?.columns ?? 80) - 2;
+
   useInput((input, key) => {
     if (input === "q" || key.escape) {
       onComplete();
@@ -140,8 +144,11 @@ export function NegotiationApp({ topic, maxRounds, providers, events, version, w
   }, [version]);
 
   const staticItems = useMemo(
-    () => displayEvents.map((event) => formatMessage(event, providers)),
-    [displayEvents, providers]
+    () => displayEvents.map((event) => {
+      const msg = formatMessage(event, providers);
+      return { ...msg, rendered: renderMarkdown(msg.content, { width }) };
+    }),
+    [displayEvents, providers, width]
   );
 
   const showProgress = waitingFor && !done && progressText;
@@ -154,7 +161,7 @@ export function NegotiationApp({ topic, maxRounds, providers, events, version, w
             <Text bold color={msg.color}>
               [{msg.label}]
             </Text>
-            <Text wrap="wrap">{msg.content}</Text>
+            <Text wrap="wrap">{msg.rendered}</Text>
           </Box>
         )}
       </Static>

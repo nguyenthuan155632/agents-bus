@@ -14,27 +14,34 @@ function getAllWriteOutput(spy: ReturnType<typeof vi.spyOn>): string {
 
 describe("PlainUIHandle", () => {
   let writeSpy: ReturnType<typeof vi.spyOn>;
+  let originalIsTTY: boolean | undefined;
 
   beforeEach(() => {
     writeSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    originalIsTTY = process.stdout.isTTY;
+    process.stdout.isTTY = false;
   });
 
   afterEach(() => {
     writeSpy.mockRestore();
+    process.stdout.isTTY = originalIsTTY;
   });
 
-  it("should write agent-response events to stdout", () => {
+  it("should write agent-response events with rendered markdown", () => {
     const ui = createPlainUI("Topic", 5, providers);
-    const event: NegotiationEvent = {
+    ui.pushEvent({
       type: "agent-response",
       agent: "claude",
-      content: "Use REST with JWT",
+      content: "## Plan\n\n**bold** text\n\n- item 1\n- item 2",
       messageType: "proposal",
-    };
-    ui.pushEvent(event);
+    });
     const output = getAllWriteOutput(writeSpy);
     expect(output).toContain("[Claude]");
-    expect(output).toContain("Use REST with JWT");
+    expect(output).toContain("PLAN");
+    expect(output).toContain("bold text");
+    expect(output).toContain("• item 1");
+    expect(output).not.toContain("##");
+    expect(output).not.toContain("**");
   });
 
   it("should write round-start events", () => {
@@ -65,12 +72,38 @@ describe("PlainUIHandle", () => {
     expect(writeSpy).not.toHaveBeenCalled();
   });
 
-  it("should write agent-progress events", () => {
+  it("should NOT write agent-progress in non-TTY mode", () => {
     const ui = createPlainUI("Topic", 5, providers);
-    ui.pushEvent({ type: "agent-progress", agent: "claude", chunk: { type: "thinking", content: "Considering options..." } });
+    ui.pushEvent({ type: "agent-progress", agent: "claude", chunk: { type: "thinking", content: "Considering..." } });
+    expect(writeSpy).not.toHaveBeenCalled();
+  });
+
+  it("should NOT emit control bytes (\\r, \\x1b[K) in non-TTY mode", () => {
+    const ui = createPlainUI("Topic", 5, providers);
+    ui.pushEvent({ type: "round-start", round: 1, maxRounds: 5 });
+    ui.pushEvent({
+      type: "agent-response",
+      agent: "claude",
+      content: "Some content",
+      messageType: "proposal",
+    });
     const output = getAllWriteOutput(writeSpy);
-    expect(output).toContain("Claude");
-    expect(output).toContain("Considering options");
+    expect(output).not.toContain("\r");
+    expect(output).not.toContain("\x1b");
+  });
+
+  it("should not contain markdown syntax in output", () => {
+    const ui = createPlainUI("Topic", 5, providers);
+    ui.pushEvent({
+      type: "agent-response",
+      agent: "claude",
+      content: "## Heading\n\n**bold** and *italic*\n\n`code`",
+      messageType: "proposal",
+    });
+    const output = getAllWriteOutput(writeSpy);
+    expect(output).not.toContain("##");
+    expect(output).not.toContain("**");
+    expect(output).not.toContain("`code`");
   });
 
   it("setWaitingFor should be a no-op (no output)", () => {
