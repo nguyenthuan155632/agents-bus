@@ -1,5 +1,9 @@
 // src/orchestrator/ui/index.ts
 
+import React from "react";
+import { render } from "ink";
+import { NegotiationApp } from "./NegotiationApp.js";
+import { createPlainUI } from "./plain-ui.js";
 import type { NegotiationEvent } from "../negotiate.js";
 import type { ProviderConfig } from "../../shared/types.js";
 
@@ -16,19 +20,10 @@ export function startUI(
   onComplete: () => void
 ): UIHandle {
   if (!process.stdout.isTTY) {
-    return createPlainUIHandle(topic, maxRounds, providers);
+    return createPlainUI(topic, maxRounds, providers);
   }
 
   return createInkUIHandle(topic, maxRounds, providers, onComplete);
-}
-
-function createPlainUIHandle(
-  topic: string,
-  maxRounds: number,
-  providers: ProviderConfig[]
-): UIHandle {
-  const { createPlainUI } = require("./plain-ui.js") as typeof import("./plain-ui.js");
-  return createPlainUI(topic, maxRounds, providers);
 }
 
 function createInkUIHandle(
@@ -37,10 +32,6 @@ function createInkUIHandle(
   providers: ProviderConfig[],
   onComplete: () => void
 ): UIHandle {
-  const React = require("react") as typeof import("react");
-  const { render } = require("ink") as typeof import("ink");
-  const { NegotiationApp } = require("./NegotiationApp.js") as typeof import("./NegotiationApp.js");
-
   const events: NegotiationEvent[] = [];
   let waitingFor: string | null = null;
   let version = 0;
