@@ -2,6 +2,7 @@
 
 import React, { useMemo } from "react";
 import { Box, Text, useInput } from "ink";
+import { ActivityIndicator } from "./ActivityIndicator.js";
 import type { NegotiationEvent } from "../negotiate.js";
 import type { ProviderConfig } from "../../shared/types.js";
 
@@ -156,9 +157,11 @@ export function NegotiationApp({ topic, maxRounds, providers, events, version, w
       </Box>
 
       {waitingFor && !done && (
-        <Box marginTop={1}>
-          <Text color="cyan">⠋ Waiting for {waitingFor}...</Text>
-        </Box>
+        <ActivityIndicator
+          label={`Waiting for ${waitingFor}...`}
+          color="cyan"
+          active={!!waitingFor && !done}
+        />
       )}
 
       {done && (
