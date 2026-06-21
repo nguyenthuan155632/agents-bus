@@ -3,14 +3,32 @@ import { CliAgent } from "../../src/orchestrator/agents/cli-agent.js";
 import { ApiAgent } from "../../src/orchestrator/agents/api-agent.js";
 import { createAgent } from "../../src/orchestrator/agents/factory.js";
 import type { ProviderConfig } from "../../src/shared/types.js";
+import { EventEmitter } from "node:events";
+import type { ChildProcess } from "node:child_process";
 
 vi.mock("node:child_process", () => ({
-  execFile: vi.fn(),
+  spawn: vi.fn(),
 }));
 
-const mockExecFile = vi.mocked(
-  await import("node:child_process").then((m) => m.execFile)
+const mockSpawn = vi.mocked(
+  await import("node:child_process").then((m) => m.spawn)
 );
+
+function mockChildProcess(stdout: string, stderr = "", exitCode = 0): ChildProcess {
+  const emitter = new EventEmitter() as any;
+  emitter.stdout = new EventEmitter();
+  emitter.stderr = new EventEmitter();
+  emitter.stdin = { write: vi.fn(), end: vi.fn() };
+  emitter.kill = vi.fn();
+
+  setTimeout(() => {
+    emitter.stdout.emit("data", Buffer.from(stdout));
+    emitter.stderr.emit("data", Buffer.from(stderr));
+    emitter.emit("close", exitCode);
+  }, 0);
+
+  return emitter as ChildProcess;
+}
 
 const cliConfig: ProviderConfig = {
   name: "claude",
@@ -39,27 +57,27 @@ const apiConfig: ProviderConfig = {
 describe("CliAgent", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("should invoke CLI with correct args from config", async () => {
-    mockExecFile.mockImplementation(((_cmd: any, _args: any, _opts: any, cb: any) => {
-      cb(null, JSON.stringify({ result: "Use REST." }), "");
-    }) as any);
+  it("should invoke CLI with stdin and return parsed response", async () => {
+    mockSpawn.mockReturnValue(
+      mockChildProcess(JSON.stringify({ result: "Use REST." }))
+    );
 
     const agent = new CliAgent(cliConfig);
     const response = await agent.invoke("Design auth API");
 
     expect(response).toBe("Use REST.");
-    expect(mockExecFile).toHaveBeenCalledWith(
+    expect(mockSpawn).toHaveBeenCalledWith(
       "claude",
-      ["-p", "Design auth API", "--output-format", "json"],
-      expect.anything(),
-      expect.anything()
+      ["-p", "-", "--output-format", "json"],
+      expect.objectContaining({ stdio: ["pipe", "pipe", "pipe"] })
     );
+
+    const child = mockSpawn.mock.results[0].value as any;
+    expect(child.stdin.write).toHaveBeenCalledWith("Design auth API");
   });
 
   it("should handle plain text parser", async () => {
-    mockExecFile.mockImplementation(((_cmd: any, _args: any, _opts: any, cb: any) => {
-      cb(null, "Plain response", "");
-    }) as any);
+    mockSpawn.mockReturnValue(mockChildProcess("Plain response"));
 
     const plainConfig = { ...cliConfig, responseParser: "plain" as const };
     const agent = new CliAgent(plainConfig);
@@ -68,13 +86,12 @@ describe("CliAgent", () => {
   });
 
   it("should handle json-array-result parser (Claude format)", async () => {
-    mockExecFile.mockImplementation(((_cmd: any, _args: any, _opts: any, cb: any) => {
-      cb(null, JSON.stringify([
+    mockSpawn.mockReturnValue(
+      mockChildProcess(JSON.stringify([
         { type: "system", subtype: "init" },
-        { type: "assistant", message: { content: [{ type: "text", text: "thinking..." }] } },
         { type: "result", result: "Use REST with JWT." },
-      ]), "");
-    }) as any);
+      ]))
+    );
 
     const arrConfig = { ...cliConfig, responseParser: "json-array-result" as const };
     const agent = new CliAgent(arrConfig);
@@ -83,14 +100,14 @@ describe("CliAgent", () => {
   });
 
   it("should handle jsonl-agent-message parser (Codex format)", async () => {
-    mockExecFile.mockImplementation(((_cmd: any, _args: any, _opts: any, cb: any) => {
-      cb(null, [
+    mockSpawn.mockReturnValue(
+      mockChildProcess([
         JSON.stringify({ type: "thread.started", thread_id: "t1" }),
         JSON.stringify({ type: "item.completed", item: { id: "i0", type: "agent_message", text: "First message" } }),
         JSON.stringify({ type: "item.completed", item: { id: "i1", type: "agent_message", text: "Final answer" } }),
         JSON.stringify({ type: "turn.completed" }),
-      ].join("\n"), "");
-    }) as any);
+      ].join("\n"))
+    );
 
     const jsonlConfig = { ...cliConfig, responseParser: "jsonl-agent-message" as const };
     const agent = new CliAgent(jsonlConfig);
@@ -98,13 +115,24 @@ describe("CliAgent", () => {
     expect(response).toBe("Final answer");
   });
 
-  it("should throw on CLI error", async () => {
-    mockExecFile.mockImplementation(((_cmd: any, _args: any, _opts: any, cb: any) => {
-      cb(new Error("crash"), "", "");
-    }) as any);
+  it("should throw on CLI error exit code", async () => {
+    mockSpawn.mockReturnValue(mockChildProcess("", "Command not found", 1));
 
     const agent = new CliAgent(cliConfig);
     await expect(agent.invoke("prompt")).rejects.toThrow("Claude CLI error");
+  });
+
+  it("should throw on spawn error", async () => {
+    const emitter = new EventEmitter() as any;
+    emitter.stdout = new EventEmitter();
+    emitter.stderr = new EventEmitter();
+    emitter.stdin = { write: vi.fn(), end: vi.fn() };
+    emitter.kill = vi.fn();
+    mockSpawn.mockReturnValue(emitter);
+    setTimeout(() => emitter.emit("error", new Error("spawn failed")), 0);
+
+    const agent = new CliAgent(cliConfig);
+    await expect(agent.invoke("prompt")).rejects.toThrow("Claude CLI error: spawn failed");
   });
 });
 

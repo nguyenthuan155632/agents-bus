@@ -1,6 +1,6 @@
 // src/orchestrator/agents/cli-agent.ts
 
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import type { ProviderConfig } from "../../shared/types.js";
 import type { Agent } from "./types.js";
 
@@ -25,27 +25,52 @@ export class CliAgent implements Agent {
 
   async invoke(prompt: string): Promise<string> {
     const args = (this.config.args ?? []).map((a) =>
-      a === "{{prompt}}" ? prompt : a
+      a === "{{prompt}}" ? "-" : a
     );
 
     return new Promise((resolve, reject) => {
+      const child = spawn(this.config.command ?? "", args, {
+        stdio: ["pipe", "pipe", "pipe"],
+        timeout: this.config.timeoutMs,
+      });
+
+      let stdout = "";
+      let stderr = "";
+      let timedOut = false;
+
       const timer = setTimeout(() => {
-        reject(new Error(`${this.config.displayName} CLI timed out`));
+        timedOut = true;
+        child.kill("SIGTERM");
       }, this.config.timeoutMs);
 
-      execFile(
-        this.config.command ?? "",
-        args,
-        { timeout: this.config.timeoutMs, maxBuffer: 10 * 1024 * 1024 },
-        (error, stdout, stderr) => {
-          clearTimeout(timer);
-          if (error) {
-            reject(new Error(`${this.config.displayName} CLI error: ${stderr || error.message}`));
-            return;
-          }
-          resolve(this.parseResponse(stdout));
+      child.stdout.on("data", (data) => {
+        stdout += data.toString();
+      });
+
+      child.stderr.on("data", (data) => {
+        stderr += data.toString();
+      });
+
+      child.on("error", (err) => {
+        clearTimeout(timer);
+        reject(new Error(`${this.config.displayName} CLI error: ${err.message}`));
+      });
+
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        if (timedOut) {
+          reject(new Error(`${this.config.displayName} CLI timed out`));
+          return;
         }
-      );
+        if (code !== 0 && !stdout) {
+          reject(new Error(`${this.config.displayName} CLI error: ${stderr || `exit ${code}`}`));
+          return;
+        }
+        resolve(this.parseResponse(stdout));
+      });
+
+      child.stdin.write(prompt);
+      child.stdin.end();
     });
   }
 
