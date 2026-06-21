@@ -1,0 +1,221 @@
+#!/usr/bin/env node
+
+import { Command } from "commander";
+import { Store } from "../mcp-server/store.js";
+import { createAgent } from "./agents/factory.js";
+import { getProviders, listProviders } from "./agents/providers.js";
+import { Negotiator, type NegotiationEvent } from "./negotiate.js";
+import { mergePlans } from "./merger.js";
+import { startUI } from "./ui/index.js";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+
+const DATA_DIR = join(homedir(), ".agents-bus");
+const PLANS_DIR = join(DATA_DIR, "plans");
+mkdirSync(PLANS_DIR, { recursive: true });
+
+const program = new Command();
+
+program
+  .name("agents-bus")
+  .description("Negotiate software plans between AI agents")
+  .version("0.1.0");
+
+program
+  .command("negotiate")
+  .description("Start a new negotiation session")
+  .argument("<topic>", "The topic to negotiate")
+  .option("-r, --rounds <number>", "Maximum rounds", "5")
+  .option("-a, --agents <agents>", "Comma-separated agent names", "claude,codex")
+  .option("--no-ui", "Disable terminal UI, use plain output")
+  .action(async (topic: string, options: { rounds: string; agents: string; ui: boolean }) => {
+    const agentNames = options.agents.split(",").map((a) => a.trim());
+    const providers = getProviders(agentNames);
+
+    if (providers.length === 0) {
+      console.error("No valid agents specified. Available: " + listProviders().map((p) => p.name).join(", "));
+      process.exit(1);
+    }
+
+    const agents = providers.map((p) => createAgent(p));
+    const maxRounds = parseInt(options.rounds, 10);
+    const store = new Store(join(DATA_DIR, "sessions.db"));
+
+    let uiHandle: ReturnType<typeof startUI> | null = null;
+
+    if (options.ui) {
+      uiHandle = startUI(topic, maxRounds, providers, () => {
+        uiHandle?.unmount();
+        store.close();
+        process.exit(0);
+      });
+    }
+
+    const onEvent = (event: NegotiationEvent) => {
+      if (uiHandle) {
+        uiHandle.pushEvent(event);
+        if (event.type === "round-start") {
+          uiHandle.setWaitingFor(providers[0]?.displayName ?? null);
+        }
+        if (event.type === "agent-response") {
+          const idx = providers.findIndex((p) => p.name === event.agent);
+          const next = providers[idx + 1];
+          uiHandle.setWaitingFor(next ? next.displayName : null);
+        }
+        if (event.type === "agent-error") {
+          const idx = providers.findIndex((p) => p.name === event.agent);
+          const next = providers[idx + 1];
+          uiHandle.setWaitingFor(next ? next.displayName : null);
+        }
+        if (event.type === "complete") {
+          uiHandle.setWaitingFor(null);
+        }
+      } else {
+        if (event.type === "round-start") {
+          console.log(`\n--- Round ${event.round}/${event.maxRounds} ---`);
+        }
+        if (event.type === "agent-response") {
+          console.log(`\n[${event.agent}] (${event.messageType}):`);
+          console.log(event.content);
+        }
+        if (event.type === "agent-error") {
+          console.error(`\n[${event.agent}] ERROR: ${event.error}`);
+        }
+        if (event.type === "complete") {
+          console.log(`\n=== ${event.status} ===`);
+        }
+      }
+    };
+
+    const negotiator = new Negotiator(store, agents, providers, onEvent);
+    const result = await negotiator.run(topic, maxRounds);
+
+    let finalPlan = result.finalPlan;
+
+    if (result.status === "EXHAUSTED") {
+      const messages = store.getMessages(result.sessionId);
+      finalPlan = await mergePlans(messages, providers);
+    }
+
+    if (finalPlan) {
+      const planPath = join(PLANS_DIR, `${result.sessionId}.md`);
+      writeFileSync(planPath, `# ${topic}\n\n${finalPlan}`, "utf-8");
+
+      if (!uiHandle) {
+        console.log(`\nPlan saved to: ${planPath}`);
+      }
+    }
+
+    if (uiHandle) {
+      uiHandle.pushEvent({
+        type: "complete",
+        status: result.status,
+        finalPlan,
+      });
+    }
+
+    if (!uiHandle) {
+      store.close();
+    }
+  });
+
+program
+  .command("list")
+  .description("List all negotiation sessions")
+  .action(() => {
+    const store = new Store(join(DATA_DIR, "sessions.db"));
+    const sessions = store.listSessions();
+    if (sessions.length === 0) {
+      console.log("No sessions found.");
+    } else {
+      for (const s of sessions) {
+        console.log(`${s.id} | ${s.state} | Round ${s.currentRound}/${s.maxRounds} | ${s.topic}`);
+      }
+    }
+    store.close();
+  });
+
+program
+  .command("view")
+  .description("View session transcript")
+  .argument("<session-id>", "Session ID to view")
+  .action((sessionId: string) => {
+    const store = new Store(join(DATA_DIR, "sessions.db"));
+    const session = store.getSession(sessionId);
+    if (!session) {
+      console.error(`Session ${sessionId} not found.`);
+      process.exit(1);
+    }
+
+    console.log(`Session: ${session.id}`);
+    console.log(`Topic: ${session.topic}`);
+    console.log(`State: ${session.state}`);
+    console.log(`Round: ${session.currentRound}/${session.maxRounds}`);
+    console.log(`Agents: ${session.agents.join(", ")}`);
+    console.log(`Approvals: ${JSON.stringify(session.approvals)}`);
+    console.log("\n--- Transcript ---\n");
+
+    const messages = store.getMessages(sessionId);
+    for (const m of messages) {
+      console.log(`[${m.agent}] (${m.type}, round ${m.round}):`);
+      console.log(m.content);
+      console.log();
+    }
+
+    store.close();
+  });
+
+program
+  .command("resume")
+  .description("Resume an existing session")
+  .argument("<session-id>", "Session ID to resume")
+  .action(async (sessionId: string) => {
+    const store = new Store(join(DATA_DIR, "sessions.db"));
+    const session = store.getSession(sessionId);
+    if (!session) {
+      console.error(`Session ${sessionId} not found.`);
+      process.exit(1);
+    }
+
+    if (session.state === "APPROVED") {
+      console.log("Session already approved.");
+      store.close();
+      return;
+    }
+
+    const remaining = session.maxRounds - session.currentRound;
+    if (remaining <= 0) {
+      console.log("Max rounds reached. Merging proposals...");
+      const messages = store.getMessages(sessionId);
+      const providers = getProviders(session.agents);
+      const merged = await mergePlans(messages, providers);
+      if (merged) {
+        const planPath = join(PLANS_DIR, `${sessionId}.md`);
+        writeFileSync(planPath, `# ${session.topic}\n\n${merged}`, "utf-8");
+        console.log(`Plan saved to: ${planPath}`);
+      }
+      store.close();
+      return;
+    }
+
+    console.log(`Resuming "${session.topic}" (${remaining} rounds remaining)`);
+    const providers = getProviders(session.agents);
+    const agents = providers.map((p) => createAgent(p));
+    const negotiator = new Negotiator(store, agents, providers);
+    const result = await negotiator.run(session.topic, remaining);
+    console.log(`Status: ${result.status} after ${result.roundsCompleted} more rounds`);
+    store.close();
+  });
+
+program
+  .command("providers")
+  .description("List available agent providers")
+  .action(() => {
+    for (const p of listProviders()) {
+      const endpoint = p.type === "cli" ? p.command : `${p.baseUrl} (${p.model})`;
+      console.log(`${p.name.padEnd(10)} | ${p.displayName.padEnd(10)} | ${p.type.padEnd(3)} | ${endpoint} | ${p.role}`);
+    }
+  });
+
+program.parse();
