@@ -53,6 +53,34 @@ export class CliAgent implements Agent {
     if (this.config.responseParser === "plain") {
       return stdout.trim();
     }
+
+    if (this.config.responseParser === "json-array-result") {
+      try {
+        const arr = JSON.parse(stdout);
+        if (Array.isArray(arr)) {
+          const resultItem = arr.find((x: any) => x.type === "result");
+          if (resultItem?.result) return String(resultItem.result);
+        }
+      } catch {
+      }
+      return stdout.trim();
+    }
+
+    if (this.config.responseParser === "jsonl-agent-message") {
+      const lines = stdout.trim().split("\n");
+      let lastMessage = "";
+      for (const line of lines) {
+        try {
+          const obj = JSON.parse(line);
+          if (obj.type === "item.completed" && obj.item?.type === "agent_message" && obj.item?.text) {
+            lastMessage = String(obj.item.text);
+          }
+        } catch {
+        }
+      }
+      return lastMessage || stdout.trim();
+    }
+
     try {
       const parsed = JSON.parse(stdout);
       if (this.config.responseParser === "json-result") {

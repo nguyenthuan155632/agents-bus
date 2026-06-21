@@ -67,6 +67,37 @@ describe("CliAgent", () => {
     expect(response).toBe("Plain response");
   });
 
+  it("should handle json-array-result parser (Claude format)", async () => {
+    mockExecFile.mockImplementation(((_cmd: any, _args: any, _opts: any, cb: any) => {
+      cb(null, JSON.stringify([
+        { type: "system", subtype: "init" },
+        { type: "assistant", message: { content: [{ type: "text", text: "thinking..." }] } },
+        { type: "result", result: "Use REST with JWT." },
+      ]), "");
+    }) as any);
+
+    const arrConfig = { ...cliConfig, responseParser: "json-array-result" as const };
+    const agent = new CliAgent(arrConfig);
+    const response = await agent.invoke("prompt");
+    expect(response).toBe("Use REST with JWT.");
+  });
+
+  it("should handle jsonl-agent-message parser (Codex format)", async () => {
+    mockExecFile.mockImplementation(((_cmd: any, _args: any, _opts: any, cb: any) => {
+      cb(null, [
+        JSON.stringify({ type: "thread.started", thread_id: "t1" }),
+        JSON.stringify({ type: "item.completed", item: { id: "i0", type: "agent_message", text: "First message" } }),
+        JSON.stringify({ type: "item.completed", item: { id: "i1", type: "agent_message", text: "Final answer" } }),
+        JSON.stringify({ type: "turn.completed" }),
+      ].join("\n"), "");
+    }) as any);
+
+    const jsonlConfig = { ...cliConfig, responseParser: "jsonl-agent-message" as const };
+    const agent = new CliAgent(jsonlConfig);
+    const response = await agent.invoke("prompt");
+    expect(response).toBe("Final answer");
+  });
+
   it("should throw on CLI error", async () => {
     mockExecFile.mockImplementation(((_cmd: any, _args: any, _opts: any, cb: any) => {
       cb(new Error("crash"), "", "");

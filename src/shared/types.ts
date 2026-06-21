@@ -34,7 +34,7 @@ export interface ProviderConfig {
   // CLI-specific (when type === "cli")
   command?: string;
   args?: string[];
-  responseParser?: "json-result" | "json-content" | "plain";
+  responseParser?: "json-result" | "json-content" | "plain" | "json-array-result" | "jsonl-agent-message";
 
   // API-specific (when type === "api")
   baseUrl?: string;
