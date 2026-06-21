@@ -70,17 +70,26 @@ program
             uiHandle.setWaitingFor(null);
           }
         } else {
+          if (event.type === "agent-progress") {
+            const prefix = event.chunk.type === "thinking" ? "thinking" : "writing";
+            process.stdout.write(`\r[${event.agent}] ${prefix}: ${event.chunk.content.slice(0, 100).replace(/\n/g, " ")}`);
+            return;
+          }
           if (event.type === "round-start") {
+            process.stdout.write("\r\x1b[K");
             console.log(`\n--- Round ${event.round}/${event.maxRounds} ---`);
           }
           if (event.type === "agent-response") {
+            process.stdout.write("\r\x1b[K");
             console.log(`\n[${event.agent}] (${event.messageType}):`);
             console.log(event.content);
           }
           if (event.type === "agent-error") {
+            process.stdout.write("\r\x1b[K");
             console.error(`\n[${event.agent}] ERROR: ${event.error}`);
           }
           if (event.type === "complete") {
+            process.stdout.write("\r\x1b[K");
             console.log(`\n=== ${event.status} ===`);
           }
         }

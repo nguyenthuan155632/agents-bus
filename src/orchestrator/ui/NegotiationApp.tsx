@@ -99,10 +99,17 @@ interface NegotiationAppProps {
   events: NegotiationEvent[];
   version: number;
   waitingFor: string | null;
+  progressText: string;
+  progressType: "thinking" | "text";
   onComplete: () => void;
 }
 
-export function NegotiationApp({ topic, maxRounds, providers, events, version, waitingFor, onComplete }: NegotiationAppProps) {
+function truncate(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text;
+  return text.slice(-maxLen);
+}
+
+export function NegotiationApp({ topic, maxRounds, providers, events, version, waitingFor, progressText, progressType, onComplete }: NegotiationAppProps) {
   useInput((input, key) => {
     if (input === "q" || key.escape) {
       onComplete();
@@ -137,6 +144,8 @@ export function NegotiationApp({ topic, maxRounds, providers, events, version, w
     [displayEvents, providers]
   );
 
+  const showProgress = waitingFor && !done && progressText;
+
   return (
     <Box flexDirection="column">
       <Static items={staticItems}>
@@ -156,13 +165,27 @@ export function NegotiationApp({ topic, maxRounds, providers, events, version, w
         </Text>
       </Box>
 
-      {waitingFor && !done && (
-        <ActivityIndicator
-          label={`Waiting for ${waitingFor}...`}
-          color="cyan"
-          active={!!waitingFor && !done}
-        />
-      )}
+      {showProgress ? (
+        <Box flexDirection="column" marginTop={1}>
+          {progressType === "thinking" ? (
+            <Text dimColor wrap="truncate">
+              {truncate(progressText.replace(/\n/g, " "), 200)}
+            </Text>
+          ) : (
+            <Text wrap="truncate" color="white">
+              {truncate(progressText.replace(/\n/g, " "), 200)}
+            </Text>
+          )}
+        </Box>
+      ) : waitingFor && !done ? (
+        <Box marginTop={1}>
+          <ActivityIndicator
+            label={`Waiting for ${waitingFor}...`}
+            color="cyan"
+            active={!!waitingFor && !done}
+          />
+        </Box>
+      ) : null}
 
       {done && (
         <Box marginTop={1}>

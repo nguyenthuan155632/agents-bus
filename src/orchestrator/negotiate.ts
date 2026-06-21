@@ -1,12 +1,13 @@
 // src/orchestrator/negotiate.ts
 
 import type { Store } from "../persistence/store.js";
-import type { Agent } from "./agents/types.js";
+import type { Agent, ProgressChunk } from "./agents/types.js";
 import type { ProviderConfig, Message } from "../shared/types.js";
 import { buildAgentPrompt, buildSystemPrompt } from "./prompts.js";
 
 export type NegotiationEvent =
   | { type: "round-start"; round: number; maxRounds: number }
+  | { type: "agent-progress"; agent: string; chunk: ProgressChunk }
   | { type: "agent-response"; agent: string; content: string; messageType: string }
   | { type: "agent-error"; agent: string; error: string }
   | { type: "round-end"; round: number; approvals: Record<string, boolean> }
@@ -116,7 +117,9 @@ export class Negotiator {
     const fullPrompt = `${systemPrompt}\n\n---\n\n${userPrompt}`;
 
     try {
-      const response = await agent.invoke(fullPrompt);
+      const response = await agent.invoke(fullPrompt, (chunk) => {
+        this.onEvent({ type: "agent-progress", agent: agent.name, chunk });
+      });
       const messageType = this.parseMessageType(response);
       this.store.postMessage(sessionId, agent.name, messageType, response, round);
       this.onEvent({ type: "agent-response", agent: agent.name, content: response, messageType });

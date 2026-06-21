@@ -2,7 +2,7 @@
 
 import { spawn } from "node:child_process";
 import type { ProviderConfig } from "../../shared/types.js";
-import type { Agent } from "./types.js";
+import type { Agent, ProgressChunk } from "./types.js";
 
 export class CliAgent implements Agent {
   constructor(private config: ProviderConfig) {}
@@ -23,7 +23,7 @@ export class CliAgent implements Agent {
     return this.config.color;
   }
 
-  async invoke(prompt: string): Promise<string> {
+  async invoke(prompt: string, onProgress?: (chunk: ProgressChunk) => void): Promise<string> {
     const args = (this.config.args ?? []).map((a) =>
       a === "{{prompt}}" ? "-" : a
     );
@@ -36,6 +36,7 @@ export class CliAgent implements Agent {
 
       let stdout = "";
       let stderr = "";
+      let lineBuffer = "";
       let timedOut = false;
 
       const timer = setTimeout(() => {
@@ -44,7 +45,17 @@ export class CliAgent implements Agent {
       }, this.config.timeoutMs);
 
       child.stdout.on("data", (data) => {
-        stdout += data.toString();
+        const chunk = data.toString();
+        stdout += chunk;
+
+        if (onProgress && this.config.responseParser === "json-array-result") {
+          lineBuffer += chunk;
+          const lines = lineBuffer.split("\n");
+          lineBuffer = lines.pop() ?? "";
+          for (const line of lines) {
+            this.parseStreamLine(line, onProgress);
+          }
+        }
       });
 
       child.stderr.on("data", (data) => {
@@ -58,6 +69,11 @@ export class CliAgent implements Agent {
 
       child.on("close", (code) => {
         clearTimeout(timer);
+
+        if (onProgress && lineBuffer) {
+          this.parseStreamLine(lineBuffer, onProgress);
+        }
+
         if (timedOut) {
           reject(new Error(`${this.config.displayName} CLI timed out`));
           return;
@@ -74,6 +90,29 @@ export class CliAgent implements Agent {
     });
   }
 
+  private parseStreamLine(line: string, onProgress: (chunk: ProgressChunk) => void): void {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    try {
+      const obj = JSON.parse(trimmed);
+
+      if (obj.type === "assistant" && obj.message?.content) {
+        for (const block of obj.message.content) {
+          if (block.type === "thinking" && block.thinking) {
+            onProgress({ type: "thinking", content: block.thinking });
+          } else if (block.type === "text" && block.text) {
+            onProgress({ type: "text", content: block.text });
+          }
+        }
+      }
+
+      if (obj.type === "item.completed" && obj.item?.type === "agent_message" && obj.item?.text) {
+        onProgress({ type: "text", content: obj.item.text });
+      }
+    } catch {
+    }
+  }
+
   private parseResponse(stdout: string): string {
     if (this.config.responseParser === "plain") {
       return stdout.trim();
@@ -87,6 +126,16 @@ export class CliAgent implements Agent {
           if (resultItem?.result) return String(resultItem.result);
         }
       } catch {
+      }
+      const lines = stdout.trim().split("\n");
+      for (const line of lines) {
+        try {
+          const obj = JSON.parse(line.trim());
+          if (obj.type === "result" && obj.result) {
+            return String(obj.result);
+          }
+        } catch {
+        }
       }
       return stdout.trim();
     }

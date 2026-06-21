@@ -8,7 +8,7 @@ export const DEFAULT_PROVIDERS: ProviderConfig[] = [
     displayName: "Claude",
     type: "cli",
     command: "claude",
-    args: ["-p", "{{prompt}}", "--output-format", "json", "--dangerously-skip-permissions"],
+    args: ["-p", "{{prompt}}", "--output-format", "stream-json", "--dangerously-skip-permissions"],
     responseParser: "json-array-result",
     role: "pragmatic architect",
     color: "blue",

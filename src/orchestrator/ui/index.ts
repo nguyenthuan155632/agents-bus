@@ -34,6 +34,8 @@ function createInkUIHandle(
 ): UIHandle {
   const events: NegotiationEvent[] = [];
   let waitingFor: string | null = null;
+  let progressText = "";
+  let progressType: "thinking" | "text" = "thinking";
   let version = 0;
   let pendingUpdate = false;
 
@@ -63,6 +65,8 @@ function createInkUIHandle(
       events,
       version,
       waitingFor,
+      progressText,
+      progressType,
       onComplete,
     });
   }
@@ -71,11 +75,26 @@ function createInkUIHandle(
 
   return {
     pushEvent(event: NegotiationEvent) {
-      events.push(event);
-      scheduleUpdate();
+      if (event.type === "agent-progress") {
+        if (event.chunk.type === "thinking") {
+          progressType = "thinking";
+          progressText = event.chunk.content;
+        } else {
+          progressType = "text";
+          progressText = progressText + event.chunk.content;
+        }
+        scheduleUpdate();
+      } else {
+        if (event.type === "agent-response" || event.type === "agent-error") {
+          progressText = "";
+        }
+        events.push(event);
+        scheduleUpdate();
+      }
     },
     setWaitingFor(agent: string | null) {
       waitingFor = agent;
+      progressText = "";
       scheduleUpdate();
     },
     unmount,
